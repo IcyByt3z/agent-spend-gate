@@ -7,3 +7,4 @@ gate/data/
 salesforce/.sf/
 salesforce/.sfdx/
 .DS_Store
+salesforce/coverage/

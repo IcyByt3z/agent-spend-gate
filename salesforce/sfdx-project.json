@@ -1,6 +1,22 @@
 {
-  "packageDirectories": [{ "path": "force-app", "default": true }],
-  "name": "agent-pay-demo",
+  "packageDirectories": [
+    {
+      "path": "force-app",
+      "default": true,
+      "package": "Agent Spend Gate",
+      "versionName": "Pilot",
+      "versionNumber": "0.1.0.NEXT",
+      "versionDescription": "Lets Agentforce agents buy from vetted sellers through the Agent Spend Gate, with approvals and a receipt for every attempt."
+    },
+    {
+      "path": "unpackaged"
+    }
+  ],
+  "name": "agent-spend-gate",
   "namespace": "",
-  "sourceApiVersion": "64.0"
+  "sourceApiVersion": "64.0",
+  "packageAliases": {
+    "Agent Spend Gate": "0Hog70000004sZhCAI",
+    "Agent Spend Gate@0.1.0-1": "04tg7000000c7QHAAY"
+  }
 }

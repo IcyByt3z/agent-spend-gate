@@ -112,41 +112,30 @@ npm run admin -- create-org --name "Customer name" --policy config/org-policy.ex
 
 ## 4. Set up Salesforce
 
-Use a free Developer Edition with Agentforce if possible (it stays active as long as you log in
-every 45 days). A Trailhead playground works too but expires.
+The Salesforce side ships as the unlocked package **Agent Spend Gate**: the receipt object and
+its views, the Apex action and approval handling, both permission sets, and a Named Credential
+already pointed at `https://agent-spend-gate.onrender.com`. It holds no key.
 
-**Deploy the code** with the Salesforce CLI (`npm install -g @salesforce/cli`):
+**Install it** from the install link for the latest version (Install for **Admins Only**), or:
 
 ```bash
-cd salesforce
+sf package install --package "Agent Spend Gate@0.1.0-1" --target-org <org alias> --wait 20
 ```
 
-```bash
-sf org login web --alias agentpay
-```
+**Add the org's key** (Setup → Named Credentials → **External Credentials** →
+Agent Payment Gate Auth → Principals → **GateToken** → Edit): set parameter `Token` to the org's
+API key from `create-org`. If the gate runs somewhere else, change the URL on the **Agent Payment
+Gate** Named Credential too.
+
+To work on the code instead, deploy the `force-app` folder with the Salesforce CLI
+(`sf project deploy start --source-dir force-app --target-org <org alias>`) and add the key the
+same way.
+
+**Assign permission sets.** The agent's user (and anyone testing the action) gets
+**Agent Payment Demo**:
 
 ```bash
-sf project deploy start --target-org agentpay --test-level RunSpecifiedTests --tests AgentPurchaseActionTest
-```
-
-**Create the credential** (Setup → Named Credentials):
-
-1. **External Credentials** tab → New
-   - Label `Agent Payment Gate Auth`, Name `Agent_Payment_Gate_Auth`, Authentication Protocol **Custom**
-   - Under Principals → New: name `GateToken`, add parameter `Token` = the org's API key from `create-org`
-   - Under Custom Headers → New: name `Authorization`, value `Bearer {!$Credential.Agent_Payment_Gate_Auth.Token}`
-2. **Named Credentials** tab → New
-   - Label `Agent Payment Gate`, Name `Agent_Payment_Gate`
-   - URL: your tunnel address from step 3
-   - External Credential: `Agent Payment Gate Auth`
-   - Leave "Generate Authorization Header" unchecked; check "Allow Formulas in HTTP Header"
-3. **Permission Sets** → Agent Payment Demo → External Credential Principal Access → add
-   `Agent_Payment_Gate_Auth - GateToken`. The permission set file already includes this entry and
-   Read access on **User External Credentials**, which anyone calling a Named Credential needs.
-   Assign the permission set to yourself and to the agent's user:
-
-```bash
-sf org assign permset --name Agent_Payment_Demo --on-behalf-of <agent user username> --target-org agentpay
+sf org assign permset --name Agent_Payment_Demo --on-behalf-of <agent user username> --target-org <org alias>
 ```
 
    People who approve purchases get **Agent Purchase Approver** instead. It lets them set
@@ -154,15 +143,16 @@ sf org assign permset --name Agent_Payment_Demo --on-behalf-of <agent user usern
    can't approve.
 
 ```bash
-sf org assign permset --name Agent_Purchase_Approver --on-behalf-of <approver username> --target-org agentpay
+sf org assign permset --name Agent_Purchase_Approver --on-behalf-of <approver username> --target-org <org alias>
 ```
 
 **Build the agent** (Agentforce Builder, which calls topics "subagents"):
 
 1. New Agent. Let the wizard create a new agent user, then assign it the permission set as above.
 2. Add a subagent named Company Lookup that the Agent Router routes company lookups to.
-3. Give it the action. The working Agent Script is in
-   `salesforce/force-app/main/default/aiAuthoringBundles/Purchasing_Assistant_1/`; its key part is:
+3. Give it the action. A working Agent Script (not part of the package, because it names one
+   org's agent user) is in `salesforce/unpackaged/main/default/aiAuthoringBundles/Purchasing_Assistant_1/`;
+   its key part is:
 
 ```
     actions:
