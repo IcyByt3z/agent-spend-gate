@@ -128,6 +128,14 @@ sf project deploy start --target-org agentpay --test-level RunSpecifiedTests --t
 sf org assign permset --name Agent_Payment_Demo --on-behalf-of <agent user username> --target-org agentpay
 ```
 
+   People who approve purchases get **Agent Purchase Approver** instead. It lets them set
+   **Decision** on receipts waiting for approval and nothing else. The agent's permission set
+   can't approve.
+
+```bash
+sf org assign permset --name Agent_Purchase_Approver --on-behalf-of <approver username> --target-org agentpay
+```
+
 **Build the agent** (Agentforce Builder, which calls topics "subagents"):
 
 1. New Agent. Let the wizard create a new agent user, then assign it the permission set as above.
@@ -164,11 +172,19 @@ What to look for:
 | "Look up acme.com using seller demo-enrich-premium" (priced at $0.50) | Status **refused**: price is above the $0.01 limit, nothing signed |
 | "Look up acme.com using seller cheapdata" | Status **blocked**: not on the approved list |
 | Keep buying until the $0.25 monthly budget is used | Status **blocked**: could exceed the monthly budget |
+| "Look up acme.com using seller demo-enrich-plus" ($0.008, above the $0.006 approval threshold) | Status **pending_approval**: nothing bought yet. Open the receipt and set **Decision** to Approved; it updates to **paid** a few seconds later. Denied closes it with nothing bought |
 | "Look up unknown-co.com" (the demo seller has no record) | Status **no_result**: nothing charged, because x402 sellers only collect payment when they answer successfully |
 | "Look up mismatch-co.com" (the demo seller returns another company's record) | Status **rejected**: paid $0.005, but the result failed its checks, so the data is withheld and the receipt records a refund owed |
 
 Every attempt appears under the **Agent Purchase Receipts** tab, and the gate's own log is at
 `GET /receipts` (same password).
+
+## Finance statement
+
+`GET /statement?month=2026-10` (with the org's key) totals the month by seller and cost center:
+purchases, amount paid, refunds owed, net, and how many attempts were rejected, refused, blocked
+or denied. Add `&format=csv` for a spreadsheet download. The agent can pass an optional cost
+center with each purchase.
 
 ## What this demonstrates
 

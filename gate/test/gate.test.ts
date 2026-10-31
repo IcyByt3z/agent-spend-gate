@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { createGateApp } from "../src/gate.ts";
 import { Store } from "../src/store.ts";
 import { MockRail } from "../src/rails.ts";
@@ -17,13 +18,14 @@ const enrich: Seller = {
   url: "http://127.0.0.1:4021/enrich",
   allowedParams: { domain: "[a-z0-9-]+(\\.[a-z0-9-]+)+" },
   network: "eip155:84532",
+  priceUsd: 0.01,
 };
 const checked: Seller = {
   ...enrich,
   id: "checked-enrich",
   resultCheck: { matchParam: "domain", requiredFields: ["companyName", "industry"] },
 };
-const premium: Seller = { ...enrich, id: "demo-enrich-premium", url: "http://127.0.0.1:4021/enrich-premium" };
+const premium: Seller = { ...enrich, id: "demo-enrich-premium", url: "http://127.0.0.1:4021/enrich-premium", priceUsd: 0.5 };
 const unused: Seller = { ...enrich, id: "not-enabled" };
 
 const catalog: Catalog = validateCatalog({ sellers: [enrich, checked, premium, unused] });
@@ -99,11 +101,12 @@ test("the caller cannot steer the gate to another URL or parameter", async () =>
   assert.equal(rail.calls.length, 0);
 });
 
-test("a price above the per-call limit is refused and costs nothing", async () => {
-  const { buy, store, org } = setup(new MockRail(500_000));
+test("a seller quoting above its listed price is refused and costs nothing", async () => {
+  const { buy, store, org, rail } = setup(new MockRail(500_000));
   const json = await (await buy(ok)).json();
   assert.equal(json.status, "refused");
   assert.match(json.reason, /above the \$0\.01 limit/);
+  assert.equal(rail.calls.length, 1);
   assert.equal(store.spentThisMonthMicros(org.id), 0);
   assert.equal(store.pendingMicros(org.id), 0);
 });
@@ -242,4 +245,139 @@ test("a result check naming a parameter the seller doesn't accept is rejected", 
 
 test("a policy naming a seller outside the catalog is rejected", () => {
   assert.throws(() => validateOrgPolicy({ ...policy, sellers: { "made-up": {} } }, catalog), /isn't in the catalog/);
+});
+
+// Approvals: purchases listed above the org's threshold wait for a person.
+
+function approvalSetup(rail = new MockRail()) {
+  const s = setup(rail);
+  s.store.setPolicy(s.org.id, { ...policy, approvalOverUsd: 0.005 });
+  const decide = async (id: string, decision: string, key = KEY) =>
+    s.app.request(`/approvals/${id}/decision`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+      body: JSON.stringify({ decision, decidedBy: "005xx00000APPROVER" }),
+    });
+  return { ...s, decide };
+}
+
+test("a purchase above the approval threshold waits and buys nothing", async () => {
+  const { buy, get, rail } = approvalSetup();
+  const json = await (await buy({ ...ok, costCenter: "Sales EMEA" })).json();
+  assert.equal(json.status, "pending_approval");
+  assert.match(json.reason, /approval threshold/);
+  assert.ok(json.approvalId);
+  assert.equal(json.receipt.approvalId, json.approvalId);
+  assert.equal(rail.calls.length, 0);
+  const { approvals } = await get("/approvals");
+  assert.equal(approvals.length, 1);
+  assert.equal(approvals[0].costCenter, "Sales EMEA");
+  assert.equal(approvals[0].priceUsd, 0.01);
+});
+
+test("an approved purchase is bought once, and can't be approved again", async () => {
+  const { buy, decide, get, rail } = approvalSetup();
+  const { approvalId } = await (await buy(ok)).json();
+  const approved = await (await decide(approvalId, "approve")).json();
+  assert.equal(approved.status, "paid");
+  assert.equal(approved.reason, "approved, within policy");
+  assert.equal(approved.receipt.approvalId, approvalId);
+  assert.equal((await decide(approvalId, "approve")).status, 409);
+  assert.equal(rail.calls.length, 1);
+  assert.equal((await get("/approvals")).approvals.length, 0);
+});
+
+test("simultaneous approvals of one request buy only once", async () => {
+  const { buy, decide, rail } = approvalSetup(new MockRail(5_000, "slow"));
+  const { approvalId } = await (await buy(ok)).json();
+  const results = await Promise.all([decide(approvalId, "approve"), decide(approvalId, "approve")]);
+  assert.deepEqual(results.map((r) => r.status).sort(), [200, 409]);
+  assert.equal(rail.calls.length, 1);
+});
+
+test("a denied purchase is receipted and nothing is bought", async () => {
+  const { buy, decide, rail } = approvalSetup();
+  const { approvalId } = await (await buy(ok)).json();
+  const denied = await (await decide(approvalId, "deny")).json();
+  assert.equal(denied.status, "denied");
+  assert.match(denied.reason, /denied by 005xx00000APPROVER/);
+  assert.equal(rail.calls.length, 0);
+});
+
+test("an approval request expires after 7 days", async () => {
+  const { buy, decide, clock, rail } = approvalSetup();
+  const { approvalId } = await (await buy(ok)).json();
+  clock.now = new Date(clock.now.getTime() + 8 * 24 * 60 * 60 * 1000);
+  const json = await (await decide(approvalId, "approve")).json();
+  assert.equal(json.status, "denied");
+  assert.match(json.reason, /expired/);
+  assert.equal(rail.calls.length, 0);
+});
+
+test("approval re-checks the rules as they stand when it is approved", async () => {
+  const { buy, decide, store, org, rail } = approvalSetup();
+  const { approvalId } = await (await buy(ok)).json();
+  store.setPolicy(org.id, { ...policy, approvalOverUsd: 0.005, sellers: { "checked-enrich": {} } });
+  const json = await (await decide(approvalId, "approve")).json();
+  assert.equal(json.status, "blocked");
+  assert.match(json.reason, /approved list/);
+  assert.equal(rail.calls.length, 0);
+});
+
+test("one org can't decide another org's approval", async () => {
+  const { buy, decide, store } = approvalSetup();
+  store.createOrg("Globex", policy, OTHER_KEY);
+  const { approvalId } = await (await buy(ok)).json();
+  assert.equal((await decide(approvalId, "approve", OTHER_KEY)).status, 404);
+});
+
+// Finance statement.
+
+test("the monthly statement totals spend and refunds by seller and cost center", async () => {
+  const { buy, get } = setup();
+  await buy({ ...ok, costCenter: "Sales" });
+  await buy({ ...ok, costCenter: "Sales" });
+  await buy({ ...ok, sellerId: "checked-enrich", params: { domain: "mismatch-co.com" }, costCenter: "Marketing" });
+  await buy({ ...ok, sellerId: "unknown-seller" });
+
+  const s = await get("/statement?month=2026-10");
+  assert.equal(s.month, "2026-10");
+  const sales = s.lines.find((l: any) => l.sellerId === "demo-enrich" && l.costCenter === "Sales");
+  assert.equal(sales.purchases, 2);
+  assert.equal(sales.paidUsd, 0.01);
+  const marketing = s.lines.find((l: any) => l.costCenter === "Marketing");
+  assert.equal(marketing.counts.rejected, 1);
+  assert.equal(marketing.refundsDueUsd, 0.005);
+  assert.equal(marketing.netUsd, 0);
+  assert.deepEqual(s.totals, { paidUsd: 0.015, refundsDueUsd: 0.005, netUsd: 0.01 });
+  assert.equal((await get("/statement?month=2026-09")).lines.length, 0);
+});
+
+test("the statement downloads as CSV with spreadsheet formulas neutralized", async () => {
+  const { buy, app } = setup();
+  await buy({ ...ok, costCenter: "-Ops" });
+  const res = await app.request("/statement?month=2026-10&format=csv", { headers: { Authorization: `Bearer ${KEY}` } });
+  assert.equal(res.headers.get("Content-Type"), "text/csv");
+  const [header, row] = (await res.text()).trim().split("\n");
+  assert.match(header, /^"month","seller_id"/);
+  assert.match(row, /"'-Ops"/);
+});
+
+test("an unreadable month is refused", async () => {
+  const { app } = setup();
+  const res = await app.request("/statement?month=October", { headers: { Authorization: `Bearer ${KEY}` } });
+  assert.equal(res.status, 400);
+});
+
+test("a database from the first release gains the new columns", () => {
+  const path = join(mkdtempSync(join(tmpdir(), "gate-")), "old.db");
+  const old = new DatabaseSync(path);
+  old.exec(`CREATE TABLE receipts (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, at TEXT NOT NULL, status TEXT NOT NULL,
+    reason TEXT NOT NULL, seller_id TEXT NOT NULL, requested_by TEXT NOT NULL, record_id TEXT NOT NULL,
+    amount_micros INTEGER NOT NULL, refund_due_micros INTEGER NOT NULL DEFAULT 0, network TEXT, transaction_ref TEXT)`);
+  old.close();
+  const store = new Store(path);
+  const { org } = store.createOrg("Acme", policy, KEY);
+  assert.equal(store.record({ orgId: org.id, status: "paid", reason: "x", sellerId: "s", requestedBy: "u", recordId: "", amountMicros: 1 }).costCenter, "");
+  assert.equal(store.recent(org.id)[0].costCenter, "");
 });

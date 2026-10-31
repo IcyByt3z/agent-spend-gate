@@ -12,7 +12,36 @@ import type { OrgPolicy } from "./config.ts";
 
 // rejected: paid, but the result failed its checks, so it was withheld and the seller owes a refund.
 // no_result: the seller had no data and nothing was charged.
-export type ReceiptStatus = "paid" | "blocked" | "refused" | "failed" | "rejected" | "no_result";
+// pending_approval / denied: the purchase needed a person's approval; denied covers expired requests.
+export type ReceiptStatus =
+  | "paid"
+  | "blocked"
+  | "refused"
+  | "failed"
+  | "rejected"
+  | "no_result"
+  | "pending_approval"
+  | "denied";
+
+export type ApprovalStatus = "pending" | "approved" | "denied";
+
+export type Approval = {
+  id: string;
+  orgId: string;
+  status: ApprovalStatus;
+  sellerId: string;
+  params: Record<string, string>;
+  requestedBy: string;
+  recordId: string;
+  costCenter: string;
+  priceMicros: number;
+  createdAt: string;
+  decidedAt: string | null;
+  decidedBy: string | null;
+};
+
+// Pending approvals older than this can no longer be approved.
+export const APPROVAL_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type Receipt = {
   id: string;
@@ -23,10 +52,12 @@ export type Receipt = {
   sellerId: string;
   requestedBy: string;
   recordId: string;
+  costCenter: string;
   amountMicros: number;
   refundDueMicros: number;
   network: string | null;
   transaction: string | null;
+  approvalId: string | null;
 };
 
 export type Org = { id: string; name: string; policy: OrgPolicy; createdAt: string };
@@ -79,7 +110,26 @@ export class Store {
         transaction_ref TEXT
       );
       CREATE INDEX IF NOT EXISTS receipts_org_at ON receipts (org_id, at);
+      CREATE TABLE IF NOT EXISTS approvals (
+        id TEXT PRIMARY KEY,
+        org_id TEXT NOT NULL REFERENCES orgs(id),
+        status TEXT NOT NULL,
+        seller_id TEXT NOT NULL,
+        params_json TEXT NOT NULL,
+        requested_by TEXT NOT NULL,
+        record_id TEXT NOT NULL,
+        cost_center TEXT NOT NULL,
+        price_micros INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        decided_at TEXT,
+        decided_by TEXT
+      );
+      CREATE INDEX IF NOT EXISTS approvals_org_status ON approvals (org_id, status);
     `);
+    // Columns added after the first release; older databases get them here.
+    const columns = new Set(this.db.prepare("PRAGMA table_info(receipts)").all().map((c: any) => c.name));
+    if (!columns.has("cost_center")) this.db.exec("ALTER TABLE receipts ADD COLUMN cost_center TEXT NOT NULL DEFAULT ''");
+    if (!columns.has("approval_id")) this.db.exec("ALTER TABLE receipts ADD COLUMN approval_id TEXT");
   }
 
   createOrg(name: string, policy: OrgPolicy, apiKey = newApiKey()): { org: Org; apiKey: string } {
@@ -149,28 +199,83 @@ export class Store {
     this.reserved.set(orgId, this.pendingMicros(orgId) - capMicros);
   }
 
-  record(fields: Omit<Receipt, "id" | "at" | "refundDueMicros" | "network" | "transaction"> &
-    Partial<Pick<Receipt, "refundDueMicros" | "network" | "transaction">>): Receipt {
+  record(fields: Omit<Receipt, "id" | "at" | "refundDueMicros" | "network" | "transaction" | "costCenter" | "approvalId"> &
+    Partial<Pick<Receipt, "refundDueMicros" | "network" | "transaction" | "costCenter" | "approvalId">>): Receipt {
     const receipt: Receipt = {
       id: randomUUID(),
       at: this.now().toISOString(),
+      costCenter: "",
       refundDueMicros: 0,
       network: null,
       transaction: null,
+      approvalId: null,
       ...fields,
     };
     this.db
       .prepare(
-        `INSERT INTO receipts (id, org_id, at, status, reason, seller_id, requested_by, record_id,
-          amount_micros, refund_due_micros, network, transaction_ref)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO receipts (id, org_id, at, status, reason, seller_id, requested_by, record_id, cost_center,
+          amount_micros, refund_due_micros, network, transaction_ref, approval_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         receipt.id, receipt.orgId, receipt.at, receipt.status, receipt.reason, receipt.sellerId,
-        receipt.requestedBy, receipt.recordId, receipt.amountMicros, receipt.refundDueMicros,
-        receipt.network, receipt.transaction,
+        receipt.requestedBy, receipt.recordId, receipt.costCenter, receipt.amountMicros,
+        receipt.refundDueMicros, receipt.network, receipt.transaction, receipt.approvalId,
       );
     return receipt;
+  }
+
+  receiptsBetween(orgId: string, from: string, to: string): Receipt[] {
+    return this.db
+      .prepare("SELECT * FROM receipts WHERE org_id = ? AND at >= ? AND at < ? ORDER BY at, rowid")
+      .all(orgId, from, to)
+      .map(toReceipt);
+  }
+
+  createApproval(fields: Pick<Approval, "orgId" | "sellerId" | "params" | "requestedBy" | "recordId" | "costCenter" | "priceMicros">): Approval {
+    const approval: Approval = {
+      id: randomUUID(),
+      status: "pending",
+      createdAt: this.now().toISOString(),
+      decidedAt: null,
+      decidedBy: null,
+      ...fields,
+    };
+    this.db
+      .prepare(
+        `INSERT INTO approvals (id, org_id, status, seller_id, params_json, requested_by, record_id,
+          cost_center, price_micros, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        approval.id, approval.orgId, approval.status, approval.sellerId, JSON.stringify(approval.params),
+        approval.requestedBy, approval.recordId, approval.costCenter, approval.priceMicros, approval.createdAt,
+      );
+    return approval;
+  }
+
+  getApproval(orgId: string, id: string): Approval | null {
+    const row = this.db.prepare("SELECT * FROM approvals WHERE org_id = ? AND id = ?").get(orgId, id);
+    return row ? toApproval(row) : null;
+  }
+
+  pendingApprovals(orgId: string): Approval[] {
+    return this.db
+      .prepare("SELECT * FROM approvals WHERE org_id = ? AND status = 'pending' ORDER BY created_at")
+      .all(orgId)
+      .map(toApproval);
+  }
+
+  // Moves a pending approval to its decision exactly once; returns false if it was already decided.
+  decideApproval(orgId: string, id: string, status: "approved" | "denied", decidedBy: string): boolean {
+    const { changes } = this.db
+      .prepare("UPDATE approvals SET status = ?, decided_at = ?, decided_by = ? WHERE org_id = ? AND id = ? AND status = 'pending'")
+      .run(status, this.now().toISOString(), decidedBy, orgId, id);
+    return changes === 1;
+  }
+
+  isExpired(approval: Approval): boolean {
+    return this.now().getTime() - Date.parse(approval.createdAt) > APPROVAL_TTL_MS;
   }
 
   recent(orgId: string, limit = 50): Receipt[] {
@@ -199,9 +304,28 @@ function toReceipt(row: any): Receipt {
     sellerId: row.seller_id,
     requestedBy: row.requested_by,
     recordId: row.record_id,
+    costCenter: row.cost_center,
     amountMicros: Number(row.amount_micros),
     refundDueMicros: Number(row.refund_due_micros),
     network: row.network,
     transaction: row.transaction_ref,
+    approvalId: row.approval_id,
+  };
+}
+
+function toApproval(row: any): Approval {
+  return {
+    id: row.id,
+    orgId: row.org_id,
+    status: row.status,
+    sellerId: row.seller_id,
+    params: JSON.parse(row.params_json),
+    requestedBy: row.requested_by,
+    recordId: row.record_id,
+    costCenter: row.cost_center,
+    priceMicros: Number(row.price_micros),
+    createdAt: row.created_at,
+    decidedAt: row.decided_at,
+    decidedBy: row.decided_by,
   };
 }

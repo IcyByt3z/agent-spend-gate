@@ -25,6 +25,11 @@ app.use(
         accepts: [{ scheme: "exact", price: "$0.005", network: NETWORK, payTo }],
         description: "Demo company enrichment (fictional data)",
       },
+      // Priced above the demo org's approval threshold, so each purchase waits for a person.
+      "GET /enrich-plus": {
+        accepts: [{ scheme: "exact", price: "$0.008", network: NETWORK, payTo }],
+        description: "Demo enrichment plus (fictional data)",
+      },
       // Priced above the gate's limit on purpose, to show a refusal before anything is signed.
       "GET /enrich-premium": {
         accepts: [{ scheme: "exact", price: "$0.50", network: NETWORK, payTo }],
@@ -38,7 +43,7 @@ app.use(
 const DOMAIN = /^[a-z0-9-]{1,63}(\.[a-z0-9-]{1,63})+$/i;
 
 // An error status here means the x402 middleware cancels settlement: no record, no charge.
-for (const [path, premium] of [["/enrich", false], ["/enrich-premium", true]] as const) {
+for (const [path, premium] of [["/enrich", false], ["/enrich-plus", true], ["/enrich-premium", true]] as const) {
   app.get(path, (c) => {
     const domain = c.req.query("domain") ?? "";
     if (!DOMAIN.test(domain)) return c.json({ error: "domain is required" }, 400);

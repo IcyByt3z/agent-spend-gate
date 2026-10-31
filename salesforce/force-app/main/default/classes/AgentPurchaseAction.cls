@@ -1,13 +1,14 @@
 /**
  * Agentforce action: buys company details for a domain through the external payment gate.
- * The gate holds the wallet and enforces spending limits and approved sellers; this class
- * only asks it to buy and records a receipt for every attempt, paid or not.
+ * The gate holds the wallet and enforces spending limits, approved sellers and approval
+ * thresholds; this class only asks it to buy and records a receipt for every attempt.
  */
 public with sharing class AgentPurchaseAction {
     @TestVisible static final String SELLER_ID = 'demo-enrich';
     static final Integer MAX_REQUESTS = 5;
     static final Pattern DOMAIN_PATTERN = Pattern.compile('^[A-Za-z0-9-]{1,63}(\\.[A-Za-z0-9-]{1,63})+$');
     static final Pattern SELLER_ID_PATTERN = Pattern.compile('^[a-z0-9-]{1,40}$');
+    static final Pattern COST_CENTER_PATTERN = Pattern.compile('^[A-Za-z0-9 _.-]{1,40}$');
 
     public class Request {
         @InvocableVariable(
@@ -25,10 +26,16 @@ public with sharing class AgentPurchaseAction {
             description='Optional seller id. Leave blank to use the default seller. The payment gate blocks any seller that is not on its approved list.'
         )
         public String sellerId;
+
+        @InvocableVariable(label='Cost center' description='Optional cost center to charge, for the monthly statement.')
+        public String costCenter;
     }
 
     public class Result {
-        @InvocableVariable(label='Status' description='paid, blocked, refused, rejected (paid but failed quality checks; refund owed), no_result (nothing charged), failed or error')
+        @InvocableVariable(
+            label='Status'
+            description='paid, blocked, refused, pending_approval (waiting for a person to approve), rejected (paid but failed quality checks; refund owed), no_result (nothing charged), denied, failed or error'
+        )
         public String status;
 
         @InvocableVariable(label='Summary' description='Plain-language result to show the user.')
@@ -43,7 +50,7 @@ public with sharing class AgentPurchaseAction {
 
     @InvocableMethod(
         label='Buy company details (payment gate)'
-        description='Buys company details for one domain from an approved data seller. Spending limits and approved sellers are enforced by the payment gate. Every attempt is saved as an Agent Purchase Receipt.'
+        description='Buys company details for one domain from an approved data seller. Spending limits, approved sellers and approvals are enforced by the payment gate. Every attempt is saved as an Agent Purchase Receipt.'
         category='Agent Payments'
     )
     public static List<Result> buy(List<Request> requests) {
@@ -74,22 +81,23 @@ public with sharing class AgentPurchaseAction {
     static Agent_Purchase_Receipt__c callGate(Request req) {
         String domain = req.domain == null ? '' : req.domain.trim().toLowerCase();
         String sellerId = String.isBlank(req.sellerId) ? SELLER_ID : req.sellerId.trim().toLowerCase();
+        String costCenter = req.costCenter == null ? '' : req.costCenter.trim();
         Agent_Purchase_Receipt__c receipt = new Agent_Purchase_Receipt__c(
             Seller__c = sellerId.left(80),
             Domain__c = domain.left(255),
             Related_Record_Id__c = req.recordId,
+            Cost_Center__c = costCenter.left(40),
             Amount_USD__c = 0
         );
 
         if (!DOMAIN_PATTERN.matcher(domain).matches()) {
-            receipt.Status__c = 'error';
-            receipt.Reason__c = 'Not a valid domain. Use a form like acme.com.';
-            return receipt;
+            return fail(receipt, 'Not a valid domain. Use a form like acme.com.');
         }
         if (!SELLER_ID_PATTERN.matcher(sellerId).matches()) {
-            receipt.Status__c = 'error';
-            receipt.Reason__c = 'Not a valid seller id.';
-            return receipt;
+            return fail(receipt, 'Not a valid seller id.');
+        }
+        if (String.isNotBlank(costCenter) && !COST_CENTER_PATTERN.matcher(costCenter).matches()) {
+            return fail(receipt, 'Not a valid cost center. Use letters, numbers, spaces, dots, dashes or underscores.');
         }
 
         Map<String, Object> body = new Map<String, Object>{
@@ -98,9 +106,16 @@ public with sharing class AgentPurchaseAction {
             'requestedBy' => UserInfo.getUserId(),
             'recordId' => req.recordId == null ? '' : String.valueOf(req.recordId)
         };
+        if (String.isNotBlank(costCenter)) {
+            body.put('costCenter', costCenter);
+        }
+        return send('/purchase', body, receipt);
+    }
 
+    // Posts to the gate and fills in the receipt from its answer. Shared with approval decisions.
+    public static Agent_Purchase_Receipt__c send(String path, Map<String, Object> body, Agent_Purchase_Receipt__c receipt) {
         HttpRequest http = new HttpRequest();
-        http.setEndpoint('callout:Agent_Payment_Gate/purchase');
+        http.setEndpoint('callout:Agent_Payment_Gate' + path);
         http.setMethod('POST');
         http.setHeader('Content-Type', 'application/json');
         http.setTimeout(60000);
@@ -110,21 +125,22 @@ public with sharing class AgentPurchaseAction {
         try {
             res = new Http().send(http);
         } catch (CalloutException e) {
-            receipt.Status__c = 'error';
-            receipt.Reason__c = ('Could not reach the payment gate: ' + e.getMessage()).left(255);
-            return receipt;
+            return fail(receipt, 'Could not reach the payment gate: ' + e.getMessage());
         }
-
         if (res.getStatusCode() != 200) {
-            receipt.Status__c = 'error';
-            receipt.Reason__c = ('The payment gate answered ' + res.getStatusCode() + '.').left(255);
-            return receipt;
+            return fail(receipt, 'The payment gate answered ' + res.getStatusCode() + '.');
         }
+        applyReply(receipt, (Map<String, Object>) JSON.deserializeUntyped(res.getBody()));
+        return receipt;
+    }
 
-        Map<String, Object> parsed = (Map<String, Object>) JSON.deserializeUntyped(res.getBody());
+    static void applyReply(Agent_Purchase_Receipt__c receipt, Map<String, Object> parsed) {
         Map<String, Object> gateReceipt = (Map<String, Object>) parsed.get('receipt');
         receipt.Status__c = (String) parsed.get('status');
         receipt.Reason__c = asText(parsed.get('reason'), 'Within policy').left(255);
+        if (parsed.get('approvalId') != null) {
+            receipt.Approval_Id__c = (String) parsed.get('approvalId');
+        }
         if (gateReceipt != null) {
             receipt.Gate_Receipt_Id__c = (String) gateReceipt.get('id');
             // JSON numbers arrive as Integer or Decimal, so convert through text.
@@ -136,10 +152,20 @@ public with sharing class AgentPurchaseAction {
         if (parsed.get('data') != null) {
             receipt.Response_JSON__c = JSON.serialize(parsed.get('data')).left(32768);
         }
+    }
+
+    static Agent_Purchase_Receipt__c fail(Agent_Purchase_Receipt__c receipt, String reason) {
+        receipt.Status__c = 'error';
+        receipt.Reason__c = reason.left(255);
         return receipt;
     }
 
+    @TestVisible
     static String summarize(Agent_Purchase_Receipt__c receipt) {
+        if (receipt.Status__c == 'pending_approval') {
+            return 'This purchase needs approval before it can go ahead, so nothing has been bought yet. '
+                + 'An approver can approve or deny it on the Agent Purchase Receipt. Details: ' + receipt.Reason__c;
+        }
         if (receipt.Status__c == 'rejected') {
             return 'Paid $' + receipt.Amount_USD__c.stripTrailingZeros().toPlainString() + ' to ' + receipt.Seller__c
                 + ', but the result failed quality checks, so it was not used. The seller owes a refund. Details: ' + receipt.Reason__c;

@@ -12,6 +12,9 @@ export type Seller = {
   // Query parameters the caller may pass through, with the pattern each value must match.
   allowedParams: Record<string, string>;
   network: string;
+  // The price agreed when the seller was vetted. A quote above it is refused, and approval
+  // thresholds are judged against it.
+  priceUsd: number;
   // Expected recipient address. When set, a payment request naming any other recipient is refused.
   payTo?: string;
   // Checks a paid result must pass before it reaches the caller. A result that fails is
@@ -30,6 +33,8 @@ export type OrgPolicy = {
   maxPerCallUsd: number;
   // Resets at the start of each calendar month (UTC).
   monthlyBudgetUsd: number;
+  // Purchases listed above this price wait for a person to approve them.
+  approvalOverUsd?: number;
   // Sellers this org may buy from, each with an optional tighter per-purchase limit.
   sellers: Record<string, { maxPerCallUsd?: number }>;
 };
@@ -59,6 +64,7 @@ export function validateCatalog(raw: unknown): Catalog {
     if (url.protocol !== "https:" && url.hostname !== "localhost" && url.hostname !== "127.0.0.1") {
       throw new Error(`seller ${s.id} must use https`);
     }
+    if (typeof s.priceUsd !== "number" || !(s.priceUsd > 0)) throw new Error(`seller ${s.id} needs a positive priceUsd`);
     for (const pattern of Object.values(s.allowedParams ?? {})) new RegExp(pattern);
     const check = s.resultCheck;
     if (check !== undefined) {
@@ -78,6 +84,9 @@ export function validateOrgPolicy(raw: unknown, catalog: Catalog): OrgPolicy {
   if (!p || typeof p !== "object") throw new Error("policy must be an object");
   for (const key of ["maxPerCallUsd", "monthlyBudgetUsd"] as const) {
     if (typeof p[key] !== "number" || !(p[key] > 0)) throw new Error(`policy.${key} must be a positive number`);
+  }
+  if (p.approvalOverUsd !== undefined && !(typeof p.approvalOverUsd === "number" && p.approvalOverUsd >= 0)) {
+    throw new Error("policy.approvalOverUsd must be a number of dollars, 0 or more");
   }
   if (!p.sellers || typeof p.sellers !== "object" || Array.isArray(p.sellers)) {
     throw new Error("policy.sellers must map seller ids to settings");

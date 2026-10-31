@@ -110,6 +110,32 @@ private class AgentPurchaseActionTest {
     }
 
     @IsTest
+    static void purchaseAwaitingApprovalIsReceiptedWithItsApprovalId() {
+        GateMock mock = new GateMock(200,
+            '{"status":"pending_approval","reason":"needs approval: listed price $0.008 is above the $0.006 approval threshold","approvalId":"a-9",'
+            + '"receipt":{"id":"r-5","status":"pending_approval","amountUsd":0,"network":null,"transaction":null,"approvalId":"a-9"}}');
+        Test.setMock(HttpCalloutMock.class, mock);
+
+        AgentPurchaseAction.Request req = request('acme.com');
+        req.sellerId = 'demo-enrich-plus';
+        req.costCenter = 'Sales EMEA';
+        List<AgentPurchaseAction.Result> results;
+        System.runAs(demoUser()) {
+            Test.startTest();
+            results = AgentPurchaseAction.buy(new List<AgentPurchaseAction.Request>{ req });
+            Test.stopTest();
+        }
+
+        Assert.areEqual('pending_approval', results[0].status);
+        Assert.isTrue(results[0].summary.contains('needs approval'));
+        Map<String, Object> sent = (Map<String, Object>) JSON.deserializeUntyped(mock.lastRequest.getBody());
+        Assert.areEqual('Sales EMEA', sent.get('costCenter'));
+        Agent_Purchase_Receipt__c saved = [SELECT Approval_Id__c, Cost_Center__c FROM Agent_Purchase_Receipt__c WHERE Id = :results[0].receiptId];
+        Assert.areEqual('a-9', saved.Approval_Id__c);
+        Assert.areEqual('Sales EMEA', saved.Cost_Center__c);
+    }
+
+    @IsTest
     static void noResultIsReceiptedWithoutCharge() {
         Test.setMock(HttpCalloutMock.class, new GateMock(200,
             '{"status":"no_result","reason":"seller had no data for this request, so nothing was charged",'

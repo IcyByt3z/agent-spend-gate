@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Approval_Id__c</fullName>
+    <label>Approval ID</label>
+    <type>Text</type>
+    <length>36</length>
+    <description>The gate's approval request id, for purchases that needed a person's approval.</description>
+    <required>false</required>
+    <externalId>true</externalId>
+</CustomField>

@@ -21,8 +21,8 @@ if ((process.env.RAIL ?? "mock") === "x402") {
   console.log(`Paying from test wallet ${x402.address}`);
   rail = x402;
 } else {
-  // Same prices as src/seller.ts: $0.005 by default, $0.50 for the premium route.
-  rail = new MockRail(5_000, "ok", { "demo-enrich-premium": 500_000 });
+  // Same prices as src/seller.ts: $0.005 by default, $0.008 for plus, $0.50 for premium.
+  rail = new MockRail(5_000, "ok", { "demo-enrich-plus": 8_000, "demo-enrich-premium": 500_000 });
   console.log("Using the mock rail: no payments are made.");
 }
 

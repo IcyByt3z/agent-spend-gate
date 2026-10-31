@@ -1,12 +1,10 @@
 {
   "maxPerCallUsd": 0.01,
   "monthlyBudgetUsd": 0.25,
+  "approvalOverUsd": 0.006,
   "sellers": {
-    "demo-enrich": {
-      "maxPerCallUsd": 0.01
-    },
-    "demo-enrich-premium": {
-      "maxPerCallUsd": 0.01
-    }
+    "demo-enrich": {},
+    "demo-enrich-plus": {},
+    "demo-enrich-premium": {}
   }
 }
