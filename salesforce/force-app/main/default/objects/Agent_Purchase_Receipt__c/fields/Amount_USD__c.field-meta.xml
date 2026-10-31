@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Amount_USD__c</fullName>
+    <label>Amount (USD)</label>
+    <type>Number</type>
+    <precision>12</precision>
+    <scale>6</scale>
+    <description>Amount actually paid. Zero for blocked, refused or failed attempts.</description>
+    <required>false</required>
+</CustomField>

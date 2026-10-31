@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Network__c</fullName>
+    <label>Network</label>
+    <type>Text</type>
+    <length>40</length>
+    <description>Payment network, for example eip155:84532 (Base Sepolia test network).</description>
+    <required>false</required>
+</CustomField>

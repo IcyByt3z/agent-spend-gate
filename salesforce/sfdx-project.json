@@ -1,0 +1,6 @@
+{
+  "packageDirectories": [{ "path": "force-app", "default": true }],
+  "name": "agent-pay-demo",
+  "namespace": "",
+  "sourceApiVersion": "64.0"
+}
