@@ -49,8 +49,18 @@ export function fromMicros(micros: number): number {
   return micros / MICROS;
 }
 
-export function loadCatalog(path: string): Catalog {
-  return validateCatalog(JSON.parse(readFileSync(path, "utf8")));
+export function loadCatalog(path: string, env: Record<string, string | undefined> = process.env): Catalog {
+  return validateCatalog(JSON.parse(expandEnv(readFileSync(path, "utf8"), env)));
+}
+
+// Replaces ${NAME} with that environment variable, so a hosted catalog can point at
+// addresses only known after deploy. A missing variable is an error, not an empty string.
+export function expandEnv(text: string, env: Record<string, string | undefined>): string {
+  return text.replace(/\$\{([A-Z0-9_]+)\}/g, (_, name: string) => {
+    const value = env[name];
+    if (!value) throw new Error(`catalog uses \${${name}}, but that environment variable isn't set`);
+    return value;
+  });
 }
 
 export function validateCatalog(raw: unknown): Catalog {

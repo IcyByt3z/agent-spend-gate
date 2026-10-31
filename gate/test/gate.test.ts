@@ -7,7 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import { createGateApp } from "../src/gate.ts";
 import { Store } from "../src/store.ts";
 import { MockRail } from "../src/rails.ts";
-import { validateCatalog, validateOrgPolicy, type Catalog, type OrgPolicy, type Seller } from "../src/config.ts";
+import { expandEnv, loadCatalog, validateCatalog, validateOrgPolicy, type Catalog, type OrgPolicy, type Seller } from "../src/config.ts";
 
 const KEY = "test-key-that-is-long-enough-123";
 const OTHER_KEY = "other-key-that-is-long-enough-456";
@@ -380,4 +380,11 @@ test("a database from the first release gains the new columns", () => {
   const { org } = store.createOrg("Acme", policy, KEY);
   assert.equal(store.record({ orgId: org.id, status: "paid", reason: "x", sellerId: "s", requestedBy: "u", recordId: "", amountMicros: 1 }).costCenter, "");
   assert.equal(store.recent(org.id)[0].costCenter, "");
+});
+
+test("a hosted catalog fills in addresses from the environment", () => {
+  assert.equal(expandEnv('{"url":"${DEMO_SELLER_URL}/enrich"}', { DEMO_SELLER_URL: "https://seller.example.com" }), '{"url":"https://seller.example.com/enrich"}');
+  assert.throws(() => expandEnv('{"url":"${DEMO_SELLER_URL}/enrich"}', {}), /DEMO_SELLER_URL/);
+  const hosted = loadCatalog("config/catalog.render.json", { DEMO_SELLER_URL: "https://seller.example.com" });
+  assert.ok(hosted.sellers.every((s) => s.url.startsWith("https://seller.example.com/")));
 });

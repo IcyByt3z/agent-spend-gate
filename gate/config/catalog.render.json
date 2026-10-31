@@ -1,0 +1,58 @@
+{
+  "sellers": [
+    {
+      "id": "demo-enrich",
+      "name": "Demo company enrichment (test network)",
+      "url": "${DEMO_SELLER_URL}/enrich",
+      "allowedParams": {
+        "domain": "[a-zA-Z0-9-]{1,63}(\\.[a-zA-Z0-9-]{1,63})+"
+      },
+      "network": "eip155:84532",
+      "priceUsd": 0.005,
+      "payTo": "0xD708d8B47fa70C0aA0793181cDc02Ae75E8480b2",
+      "resultCheck": {
+        "matchParam": "domain",
+        "requiredFields": [
+          "companyName",
+          "industry"
+        ]
+      }
+    },
+    {
+      "id": "demo-enrich-plus",
+      "name": "Demo enrichment plus (needs approval in the demo org)",
+      "url": "${DEMO_SELLER_URL}/enrich-plus",
+      "allowedParams": {
+        "domain": "[a-zA-Z0-9-]{1,63}(\\.[a-zA-Z0-9-]{1,63})+"
+      },
+      "network": "eip155:84532",
+      "priceUsd": 0.008,
+      "payTo": "0xD708d8B47fa70C0aA0793181cDc02Ae75E8480b2",
+      "resultCheck": {
+        "matchParam": "domain",
+        "requiredFields": [
+          "companyName",
+          "industry"
+        ]
+      }
+    },
+    {
+      "id": "demo-enrich-premium",
+      "name": "Demo premium enrichment (priced above the limit on purpose)",
+      "url": "${DEMO_SELLER_URL}/enrich-premium",
+      "allowedParams": {
+        "domain": "[a-zA-Z0-9-]{1,63}(\\.[a-zA-Z0-9-]{1,63})+"
+      },
+      "network": "eip155:84532",
+      "priceUsd": 0.5,
+      "payTo": "0xD708d8B47fa70C0aA0793181cDc02Ae75E8480b2",
+      "resultCheck": {
+        "matchParam": "domain",
+        "requiredFields": [
+          "companyName",
+          "industry"
+        ]
+      }
+    }
+  ]
+}

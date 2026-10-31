@@ -11,7 +11,9 @@ import { demoLookup } from "./demo-data.ts";
 const NETWORK = "eip155:84532";
 const payTo = process.env.SELLER_PAY_TO;
 if (!payTo) throw new Error("Set SELLER_PAY_TO to the address that should receive test payments (see npm run keys).");
-const port = Number(process.env.SELLER_PORT ?? 4021);
+const port = Number(process.env.PORT ?? process.env.SELLER_PORT ?? 4021);
+// Local runs stay private; hosts like Render set HOST=0.0.0.0.
+const hostname = process.env.HOST ?? "127.0.0.1";
 
 const facilitator = new HTTPFacilitatorClient({ url: process.env.FACILITATOR_URL ?? "https://x402.org/facilitator" });
 const resourceServer = new x402ResourceServer(facilitator).register(NETWORK, new ExactEvmScheme());
@@ -52,5 +54,7 @@ for (const [path, premium] of [["/enrich", false], ["/enrich-plus", true], ["/en
   });
 }
 
-serve({ fetch: app.fetch, port, hostname: "127.0.0.1" });
-console.log(`Demo seller listening on http://127.0.0.1:${port} (paid on ${NETWORK} to ${payTo})`);
+app.get("/health", (c) => c.json({ ok: true }));
+
+serve({ fetch: app.fetch, port, hostname });
+console.log(`Demo seller listening on http://${hostname}:${port} (paid on ${NETWORK} to ${payTo})`);

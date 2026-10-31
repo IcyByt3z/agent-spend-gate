@@ -75,7 +75,8 @@ Test USDC has no value. Never send real funds to these addresses.
 
 ## 3. Make the gate reachable from Salesforce
 
-Salesforce needs a public HTTPS address. The quickest free option is a Cloudflare quick tunnel:
+Salesforce needs a public HTTPS address. For a permanent one, deploy to Render (below). For a
+quick test from your Mac, use a Cloudflare quick tunnel:
 
 ```bash
 brew install cloudflared
@@ -87,7 +88,27 @@ cloudflared tunnel --url http://127.0.0.1:8787
 
 It prints an address like `https://something-random.trycloudflare.com`. That address changes
 every time you restart the tunnel, so update the Named Credential (step 4) when it does. Only the
-gate is exposed; it requires the password from `.env`, and the seller stays private on your Mac.
+gate is exposed; it requires an org's API key, and the seller stays private on your Mac.
+
+### Deploy to Render
+
+`render.yaml` describes two services: the gate (Starter plan with a 1 GB disk for its database)
+and the demo seller (free plan; it sleeps when idle, so the first lookup after a while is slow).
+
+1. Push this repository to GitHub (a private repository is fine).
+2. In Render: **New → Blueprint**, connect the repository, and fill in the values it asks for:
+   - `BUYER_PRIVATE_KEY`: the buyer key from `gate/.env` (test funds only)
+   - `SELLER_PAY_TO`: the seller address from `gate/.env`
+   - `DEMO_SELLER_URL`: `https://agent-spend-demo-seller.onrender.com`. If Render gives the
+     seller a different address, change this value on the gate service afterwards.
+3. When both services are live, open the gate service's **Shell** and create an org:
+
+```bash
+npm run admin -- create-org --name "Customer name" --policy config/org-policy.example.json
+```
+
+4. In the customer's Salesforce, set the Named Credential URL to the gate's `onrender.com`
+   address and the External Credential's `Token` to the printed key.
 
 ## 4. Set up Salesforce
 
