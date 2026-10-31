@@ -11,7 +11,11 @@ export type BuyRequest = { seller: Seller; url: string; capMicros: number };
 
 export type BuyResult =
   | { ok: true; data: unknown; paidMicros: number; network?: string; transaction?: string }
-  | { ok: false; refused: boolean; noResult?: boolean; reason: string };
+  // retryable: the seller certainly didn't collect payment, so trying again can't pay twice.
+  | { ok: false; refused: boolean; noResult?: boolean; retryable?: boolean; reason: string };
+
+// Connection errors raised before any request reached the seller.
+const NOT_SENT = new Set(["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN"]);
 
 const NO_RESULT = "seller had no data for this request, so nothing was charged";
 
@@ -27,7 +31,8 @@ export class X402Rail implements Rail {
   private account;
   private timeoutMs: number;
 
-  constructor(privateKey: string, timeoutMs = 30_000) {
+  // Two attempts plus the retry pause must fit inside Salesforce's 60-second callout limit.
+  constructor(privateKey: string, timeoutMs = 25_000) {
     this.account = privateKeyToAccount(privateKey as `0x${string}`);
     this.timeoutMs = timeoutMs;
   }
@@ -71,17 +76,20 @@ export class X402Rail implements Rail {
       if (message.includes("spendControls")) {
         return { ok: false, refused: true, reason: `seller's price is above the ${formatUsd(capMicros)} limit` };
       }
-      return { ok: false, refused: false, reason: `payment or request failed: ${message.slice(0, 200)}` };
+      // A timeout is not retried: the seller may have collected payment and just answered late.
+      const code = ((err as { cause?: { code?: string } }).cause?.code) ?? "";
+      return { ok: false, refused: false, retryable: NOT_SENT.has(code), reason: `payment or request failed: ${message.slice(0, 200)}` };
     }
 
     if (refusal) return { ok: false, refused: true, reason: refusal };
+    // x402 sellers only collect payment when they answer successfully, so a 402 here, a 404
+    // or a server error costs nothing.
     if (response.status === 402) {
-      return { ok: false, refused: false, reason: "seller didn't accept the payment (check the buyer wallet has test USDC)" };
+      return { ok: false, refused: false, retryable: true, reason: "seller didn't accept the payment (check the buyer wallet has test USDC)" };
     }
-    // x402 sellers only collect payment when they answer successfully, so a 404 costs nothing.
     if (response.status === 404) return { ok: false, refused: false, noResult: true, reason: NO_RESULT };
     if (!response.ok) {
-      return { ok: false, refused: false, reason: `seller answered ${response.status}` };
+      return { ok: false, refused: false, retryable: response.status >= 500, reason: `seller answered ${response.status}` };
     }
 
     const header = response.headers.get("PAYMENT-RESPONSE");
@@ -107,11 +115,11 @@ export class X402Rail implements Rail {
 export class MockRail implements Rail {
   calls: BuyRequest[] = [];
   private priceMicros: number;
-  private behavior: "ok" | "fail" | "slow";
+  private behavior: "ok" | "fail" | "slow" | "waking";
   private sellerPrices: Record<string, number>;
 
   // sellerPrices overrides the default price for a seller id, so mock mode can mirror real seller prices.
-  constructor(priceMicros = 5_000, behavior: "ok" | "fail" | "slow" = "ok", sellerPrices: Record<string, number> = {}) {
+  constructor(priceMicros = 5_000, behavior: "ok" | "fail" | "slow" | "waking" = "ok", sellerPrices: Record<string, number> = {}) {
     this.priceMicros = priceMicros;
     this.behavior = behavior;
     this.sellerPrices = sellerPrices;
@@ -125,6 +133,10 @@ export class MockRail implements Rail {
       return { ok: false, refused: true, reason: `seller's price ${formatUsd(price)} is above the ${formatUsd(req.capMicros)} limit` };
     }
     if (this.behavior === "fail") return { ok: false, refused: false, reason: "seller answered 500" };
+    // Fails retryably on the first call only, like a seller waking from sleep.
+    if (this.behavior === "waking" && this.calls.length === 1) {
+      return { ok: false, refused: false, retryable: true, reason: "seller didn't accept the payment" };
+    }
     const url = new URL(req.url);
     const record = demoLookup(url.searchParams.get("domain") ?? "", url.pathname.endsWith("-premium"));
     if (!record) return { ok: false, refused: false, noResult: true, reason: NO_RESULT };

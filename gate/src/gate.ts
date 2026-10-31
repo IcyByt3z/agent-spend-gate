@@ -28,8 +28,9 @@ type Purchase = {
 
 type Outcome = { status: ReceiptStatus; reason: string; data?: unknown; approvalId?: string; receipt: Receipt };
 
-export function createGateApp(opts: { catalog: Catalog; rail: Rail; store: Store }) {
+export function createGateApp(opts: { catalog: Catalog; rail: Rail; store: Store; retryDelayMs?: number }) {
   const { catalog, rail, store } = opts;
+  const retryDelayMs = opts.retryDelayMs ?? 2_000;
   const app = new Hono<{ Variables: { org: Org } }>();
 
   app.get("/health", (c) => c.json({ ok: true }));
@@ -85,7 +86,12 @@ export function createGateApp(opts: { catalog: Catalog; rail: Rail; store: Store
     }
 
     try {
-      const result = await rail.buy({ seller: p.seller, url: p.url, capMicros: p.capMicros });
+      let result = await rail.buy({ seller: p.seller, url: p.url, capMicros: p.capMicros });
+      // One more try when the seller certainly wasn't paid, such as a host waking from sleep.
+      if (!result.ok && result.retryable) {
+        await new Promise((r) => setTimeout(r, retryDelayMs));
+        result = await rail.buy({ seller: p.seller, url: p.url, capMicros: p.capMicros });
+      }
       if (!result.ok) {
         const status = result.refused ? "refused" : result.noResult ? "no_result" : "failed";
         return { status, reason: result.reason, receipt: store.record({ ...base, status, reason: result.reason, amountMicros: 0 }) };

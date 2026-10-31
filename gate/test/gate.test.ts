@@ -44,7 +44,7 @@ function setup(rail = new MockRail(), opts: { path?: string; clock?: { now: Date
   const store = new Store(opts.path ?? ":memory:", () => clock.now);
   if (store.listOrgs().length === 0) store.createOrg("Acme", policy, KEY);
   const org = store.orgForKey(KEY)!;
-  const app = createGateApp({ catalog, rail, store });
+  const app = createGateApp({ catalog, rail, store, retryDelayMs: 0 });
   const buy = (body: unknown, key = KEY) =>
     app.request("/purchase", {
       method: "POST",
@@ -387,4 +387,23 @@ test("a hosted catalog fills in addresses from the environment", () => {
   assert.throws(() => expandEnv('{"url":"${DEMO_SELLER_URL}/enrich"}', {}), /DEMO_SELLER_URL/);
   const hosted = loadCatalog("config/catalog.render.json", { DEMO_SELLER_URL: "https://seller.example.com" });
   assert.ok(hosted.sellers.every((s) => s.url.startsWith("https://seller.example.com/")));
+});
+
+// Retries: only when the seller certainly wasn't paid.
+
+test("a seller waking from sleep is retried once and the purchase goes through", async () => {
+  const rail = new MockRail(5_000, "waking");
+  const { buy, store, org } = setup(rail);
+  const json = await (await buy(ok)).json();
+  assert.equal(json.status, "paid");
+  assert.equal(rail.calls.length, 2);
+  assert.equal(store.spentThisMonthMicros(org.id), 5_000);
+  assert.equal(store.recent(org.id).length, 1);
+});
+
+test("a failure that might have been paid is not retried", async () => {
+  const rail = new MockRail(5_000, "fail");
+  const { buy } = setup(rail);
+  assert.equal((await (await buy(ok)).json()).status, "failed");
+  assert.equal(rail.calls.length, 1);
 });
