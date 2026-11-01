@@ -20,7 +20,7 @@ would stop a company from using it. Don't pitch. Ask, listen, take notes.
 > budget), holds bigger purchases for approval in Salesforce, withholds bad data, and saves a
 > receipt for every attempt, including the ones it blocks.
 >
-> Here's a 2-minute silent demo: [link]
+> Here's a 3-minute silent demo: https://youtu.be/aprOw7Z5Uqc
 >
 > Would you be open to a 15-minute call, or even a few lines of reply? I'm trying to learn
 > whether this solves a real problem and what would stop a team like yours from using it.
@@ -30,7 +30,7 @@ would stop a company from using it. Don't pitch. Ask, listen, take notes.
 
 > Built a prototype: Agentforce agents buy data from outside vendors through a gate that
 > enforces approved vendors, limits, approvals and receipts. The agent never holds money.
-> 2-minute demo: [link]. Would your team let an agent spend company money like this? What
+> 3-minute demo: https://youtu.be/aprOw7Z5Uqc. Would your team let an agent spend company money like this? What
 > would stop you? Looking for honest feedback.
 
 ## The questions
