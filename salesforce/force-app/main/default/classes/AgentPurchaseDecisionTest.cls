@@ -20,6 +20,8 @@ private class AgentPurchaseDecisionTest {
         }
     }
 
+    static final String REASON = 'Needed for the  Q4 renewal review';
+
     // Decisions are made by a user holding the approver permission set.
     static User approver() {
         Id psId = [SELECT Id FROM PermissionSet WHERE Name = 'Agent_Purchase_Approver'].Id;
@@ -61,7 +63,7 @@ private class AgentPurchaseDecisionTest {
 
         System.runAs(approver()) {
             Test.startTest();
-            update new Agent_Purchase_Receipt__c(Id = r.Id, Decision__c = 'Approved');
+            update new Agent_Purchase_Receipt__c(Id = r.Id, Decision__c = 'Approved', Decision_Reason__c = REASON);
             Test.stopTest();
         }
 
@@ -75,6 +77,7 @@ private class AgentPurchaseDecisionTest {
         Map<String, Object> sent = (Map<String, Object>) JSON.deserializeUntyped(mock.lastRequest.getBody());
         Assert.areEqual('approve', sent.get('decision'));
         Assert.areEqual(UserInfo.getUserId(), sent.get('decidedBy'));
+        Assert.areEqual('Needed for the Q4 renewal review', sent.get('note'));
     }
 
     @IsTest
@@ -87,7 +90,7 @@ private class AgentPurchaseDecisionTest {
 
         System.runAs(approver()) {
             Test.startTest();
-            update new Agent_Purchase_Receipt__c(Id = r.Id, Decision__c = 'Denied');
+            update new Agent_Purchase_Receipt__c(Id = r.Id, Decision__c = 'Denied', Decision_Reason__c = REASON);
             Test.stopTest();
         }
 
@@ -104,13 +107,49 @@ private class AgentPurchaseDecisionTest {
 
         System.runAs(approver()) {
             Test.startTest();
-            update new Agent_Purchase_Receipt__c(Id = r.Id, Decision__c = 'Denied');
+            update new Agent_Purchase_Receipt__c(Id = r.Id, Decision__c = 'Denied', Decision_Reason__c = REASON);
             Test.stopTest();
             try {
-                update new Agent_Purchase_Receipt__c(Id = r.Id, Decision__c = 'Approved');
+                update new Agent_Purchase_Receipt__c(Id = r.Id, Decision__c = 'Approved', Decision_Reason__c = REASON);
                 Assert.fail('changing a decision should be rejected');
             } catch (DmlException e) {
                 Assert.isTrue(e.getMessage().contains('already been made'));
+            }
+        }
+    }
+
+    @IsTest
+    static void aDecisionNeedsAReason() {
+        Agent_Purchase_Receipt__c r = pending();
+
+        System.runAs(approver()) {
+            for (String reason : new List<String>{ null, '   ', 'ok  ' }) {
+                try {
+                    update new Agent_Purchase_Receipt__c(Id = r.Id, Decision__c = 'Approved', Decision_Reason__c = reason);
+                    Assert.fail('a decision without a reason should be rejected');
+                } catch (DmlException e) {
+                    Assert.isTrue(e.getMessage().contains('Say why'), e.getMessage());
+                }
+            }
+        }
+        Assert.isNull(reload(r.Id).Decision__c);
+    }
+
+    @IsTest
+    static void theReasonCantBeChangedAfterTheDecision() {
+        Agent_Purchase_Receipt__c r = pending();
+        Test.setMock(HttpCalloutMock.class, new GateMock(200,
+            '{"status":"denied","reason":"denied","receipt":{"id":"r-d","status":"denied","amountUsd":0}}'));
+
+        System.runAs(approver()) {
+            Test.startTest();
+            update new Agent_Purchase_Receipt__c(Id = r.Id, Decision__c = 'Denied', Decision_Reason__c = REASON);
+            Test.stopTest();
+            try {
+                update new Agent_Purchase_Receipt__c(Id = r.Id, Decision_Reason__c = 'A better-sounding reason');
+                Assert.fail('rewriting the reason should be rejected');
+            } catch (DmlException e) {
+                Assert.isTrue(e.getMessage().contains('can\'t be changed'), e.getMessage());
             }
         }
     }
@@ -122,7 +161,7 @@ private class AgentPurchaseDecisionTest {
 
         System.runAs(approver()) {
             try {
-                update new Agent_Purchase_Receipt__c(Id = r.Id, Decision__c = 'Approved');
+                update new Agent_Purchase_Receipt__c(Id = r.Id, Decision__c = 'Approved', Decision_Reason__c = REASON);
                 Assert.fail('deciding a paid purchase should be rejected');
             } catch (DmlException e) {
                 Assert.isTrue(e.getMessage().contains('waiting for approval'));
@@ -137,7 +176,7 @@ private class AgentPurchaseDecisionTest {
 
         System.runAs(approver()) {
             Test.startTest();
-            update new Agent_Purchase_Receipt__c(Id = r.Id, Decision__c = 'Approved');
+            update new Agent_Purchase_Receipt__c(Id = r.Id, Decision__c = 'Approved', Decision_Reason__c = REASON);
             Test.stopTest();
         }
 
@@ -162,7 +201,7 @@ private class AgentPurchaseDecisionTest {
 
         System.runAs(agent) {
             try {
-                Database.update(new Agent_Purchase_Receipt__c(Id = r.Id, Decision__c = 'Approved'), AccessLevel.USER_MODE);
+                Database.update(new Agent_Purchase_Receipt__c(Id = r.Id, Decision__c = 'Approved', Decision_Reason__c = REASON), AccessLevel.USER_MODE);
                 Assert.fail('the agent permission set should not allow decisions');
             } catch (Exception e) {
                 // User-mode DML reports missing edit access as "UPDATE not allowed".

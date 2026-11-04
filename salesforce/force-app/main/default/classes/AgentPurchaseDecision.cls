@@ -15,14 +15,20 @@ public with sharing class AgentPurchaseDecision implements Queueable, Database.A
         this.receiptIds = receiptIds;
     }
 
+    // Matches the gate's limits on a decision note, after spaces are collapsed.
+    @TestVisible static final Integer REASON_MIN = 5;
+
     // Called by the trigger. Rejects decisions on receipts that aren't waiting for one, and
-    // queues the ones that are newly decided.
+    // decisions without a reason; a reason can't be changed once the decision is made.
     public static void beforeUpdate(List<Agent_Purchase_Receipt__c> records, Map<Id, Agent_Purchase_Receipt__c> oldMap) {
         if (resettingDecision) {
             return;
         }
         for (Agent_Purchase_Receipt__c r : records) {
             Agent_Purchase_Receipt__c old = oldMap.get(r.Id);
+            if (old.Decision__c != null && r.Decision_Reason__c != old.Decision_Reason__c) {
+                r.Decision_Reason__c.addError('The reason can\'t be changed after the decision is made.');
+            }
             if (r.Decision__c == old.Decision__c) {
                 continue;
             }
@@ -30,6 +36,8 @@ public with sharing class AgentPurchaseDecision implements Queueable, Database.A
                 r.Decision__c.addError('A decision has already been made on this purchase.');
             } else if (old.Status__c != 'pending_approval' || String.isBlank(old.Approval_Id__c)) {
                 r.Decision__c.addError('Only purchases waiting for approval can be approved or denied.');
+            } else if (String.isBlank(r.Decision_Reason__c) || r.Decision_Reason__c.normalizeSpace().length() < REASON_MIN) {
+                r.Decision_Reason__c.addError('Say why you are approving or denying this purchase (at least ' + REASON_MIN + ' characters).');
             }
         }
     }
@@ -52,7 +60,7 @@ public with sharing class AgentPurchaseDecision implements Queueable, Database.A
 
     public void execute(QueueableContext context) {
         List<Agent_Purchase_Receipt__c> receipts = [
-            SELECT Id, Approval_Id__c, Decision__c, Status__c, Seller__c, Domain__c, Amount_USD__c, LastModifiedById
+            SELECT Id, Approval_Id__c, Decision__c, Decision_Reason__c, Status__c, Seller__c, Domain__c, Amount_USD__c, LastModifiedById
             FROM Agent_Purchase_Receipt__c
             WHERE Id IN :receiptIds AND Status__c = 'pending_approval' AND Decision__c != null
             WITH USER_MODE
@@ -64,7 +72,8 @@ public with sharing class AgentPurchaseDecision implements Queueable, Database.A
         for (Agent_Purchase_Receipt__c r : receipts) {
             Map<String, Object> body = new Map<String, Object>{
                 'decision' => r.Decision__c == 'Approved' ? 'approve' : 'deny',
-                'decidedBy' => String.valueOf(r.LastModifiedById)
+                'decidedBy' => String.valueOf(r.LastModifiedById),
+                'note' => r.Decision_Reason__c == null ? '' : r.Decision_Reason__c.normalizeSpace()
             };
             Agent_Purchase_Receipt__c reply = AgentPurchaseAction.send(
                 '/approvals/' + EncodingUtil.urlEncode(r.Approval_Id__c, 'UTF-8') + '/decision',

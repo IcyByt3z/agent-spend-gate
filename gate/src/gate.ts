@@ -7,12 +7,14 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { toMicros, fromMicros, type Catalog, type Seller } from "./config.ts";
-import type { Approval, Org, Receipt, ReceiptStatus, Store } from "./store.ts";
+import type { Approval, DecisionLogEntry, Org, Receipt, ReceiptStatus, Store } from "./store.ts";
 import type { Rail } from "./rails.ts";
 
 const ID_PATTERN = /^[A-Za-z0-9_.@-]{1,80}$/;
 const COST_CENTER_PATTERN = /^[A-Za-z0-9 _.-]{1,40}$/;
 const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+const NOTE_MIN = 5;
+const NOTE_MAX = 500;
 
 // A purchase that has passed the org's seller and parameter rules.
 type Purchase = {
@@ -207,20 +209,23 @@ export function createGateApp(opts: { catalog: Catalog; rail: Rail; store: Store
     if ((decision !== "approve" && decision !== "deny") || !decidedBy) {
       return c.json({ error: 'decision ("approve" or "deny") and decidedBy are required' }, 400);
     }
+    // A decision without a reason leaves later reviewers nothing to check it against.
+    const note = cleanNote(body.note);
+    if (!note) return c.json({ error: `note explaining the decision is required (${NOTE_MIN}-${NOTE_MAX} characters)` }, 400);
     if (approval.status !== "pending") return c.json({ error: `already ${approval.status}`, approval: publicApproval(approval) }, 409);
 
     const base = receiptBase(org, approval, approval.sellerId, approval.id);
     const expired = store.isExpired(approval);
     if (decision === "deny" || expired) {
-      if (!store.decideApproval(org.id, approval.id, "denied", expired ? "expired" : decidedBy)) {
+      if (!store.decideApproval(org.id, approval.id, "denied", expired ? "expired" : decidedBy, note)) {
         return c.json({ error: "already decided" }, 409);
       }
-      const reason = expired ? "approval request expired before it was approved" : `denied by ${decidedBy}`;
+      const reason = expired ? "approval request expired before it was approved" : `denied by ${decidedBy}: ${note}`;
       return c.json(reply({ status: "denied", reason, approvalId: approval.id, receipt: store.record({ ...base, status: "denied", reason, amountMicros: 0 }) }));
     }
 
     // Decide first, so a second approval of the same request can't buy twice.
-    if (!store.decideApproval(org.id, approval.id, "approved", decidedBy)) return c.json({ error: "already decided" }, 409);
+    if (!store.decideApproval(org.id, approval.id, "approved", decidedBy, note)) return c.json({ error: "already decided" }, 409);
 
     // The rules are checked again as they stand now; approval only lifts the threshold.
     const vetted = vet(org, approval.sellerId, approval.params, approval);
@@ -230,14 +235,32 @@ export function createGateApp(opts: { catalog: Catalog; rail: Rail; store: Store
     return c.json(reply({ ...(await execute(org, vetted, approval.id)), approvalId: approval.id }));
   });
 
+  // Every approval decided in a month: who decided, why, and what happened, as JSON or CSV.
+  app.get("/approvals/log", (c) => {
+    const org = c.get("org");
+    const range = monthRange(c.req.query("month"));
+    if (!range) return c.json({ error: "month must look like 2026-10" }, 400);
+    const decisions = store.decisionLog(org.id, range.from, range.to).map(publicDecision);
+
+    if (c.req.query("format") === "csv") {
+      const header = ["approval_id", "requested_at", "seller_id", "cost_center", "price_usd", "requested_by", "record_id",
+        "decision", "decided_by", "decided_at", "note", "outcome", "paid_usd", "transaction"];
+      const rows = decisions.map((d) => [
+        d.id, d.createdAt, d.sellerId, d.costCenter, d.priceUsd, d.requestedBy, d.recordId,
+        d.status, d.decidedBy, d.decidedAt, d.note, d.outcome, d.paidUsd, d.transaction,
+      ]);
+      c.header("Content-Disposition", `attachment; filename="agent-approvals-${range.month}.csv"`);
+      return c.body([header, ...rows].map((r) => r.map(csvCell).join(",")).join("\n") + "\n", 200, { "Content-Type": "text/csv" });
+    }
+    return c.json({ org: org.name, month: range.month, decisions });
+  });
+
   // Monthly statement for finance: totals by seller and cost center, as JSON or CSV.
   app.get("/statement", (c) => {
     const org = c.get("org");
-    const month = c.req.query("month") ?? new Date().toISOString().slice(0, 7);
-    if (!MONTH_PATTERN.test(month)) return c.json({ error: "month must look like 2026-10" }, 400);
-    const [y, m] = month.split("-").map(Number);
-    const from = new Date(Date.UTC(y, m - 1, 1)).toISOString();
-    const to = new Date(Date.UTC(y, m, 1)).toISOString();
+    const range = monthRange(c.req.query("month"));
+    if (!range) return c.json({ error: "month must look like 2026-10" }, 400);
+    const { month, from, to } = range;
     const statement = buildStatement(store.receiptsBetween(org.id, from, to), catalog);
 
     if (c.req.query("format") === "csv") {
@@ -249,7 +272,8 @@ export function createGateApp(opts: { catalog: Catalog; rail: Rail; store: Store
       c.header("Content-Disposition", `attachment; filename="agent-spend-${month}.csv"`);
       return c.body([header, ...rows].map((r) => r.map(csvCell).join(",")).join("\n") + "\n", 200, { "Content-Type": "text/csv" });
     }
-    return c.json({ org: org.name, month, ...statement });
+    const decisions = store.decisionLog(org.id, from, to).map(publicDecision);
+    return c.json({ org: org.name, month, ...statement, decisions });
   });
 
   return app;
@@ -304,6 +328,20 @@ function buildStatement(receipts: Receipt[], catalog: Catalog) {
   };
 }
 
+function monthRange(raw: string | undefined): { month: string; from: string; to: string } | null {
+  const month = raw ?? new Date().toISOString().slice(0, 7);
+  if (!MONTH_PATTERN.test(month)) return null;
+  const [y, m] = month.split("-").map(Number);
+  return { month, from: new Date(Date.UTC(y, m - 1, 1)).toISOString(), to: new Date(Date.UTC(y, m, 1)).toISOString() };
+}
+
+// Collapses whitespace and drops control characters; returns null unless the note is a usable length.
+function cleanNote(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const note = raw.replace(/\p{Cc}/gu, " ").replace(/\s+/g, " ").trim();
+  return note.length >= NOTE_MIN && note.length <= NOTE_MAX ? note : null;
+}
+
 // Quotes every cell and neutralizes leading characters spreadsheets treat as formulas.
 function csvCell(value: unknown): string {
   let s = String(value ?? "");
@@ -342,6 +380,16 @@ function publicApproval(a: Approval) {
     createdAt: a.createdAt,
     decidedAt: a.decidedAt,
     decidedBy: a.decidedBy,
+    note: a.decisionNote,
+  };
+}
+
+function publicDecision(d: DecisionLogEntry) {
+  return {
+    ...publicApproval(d),
+    outcome: d.outcomeStatus,
+    paidUsd: fromMicros(d.outcomeAmountMicros),
+    transaction: d.outcomeTransaction,
   };
 }
 

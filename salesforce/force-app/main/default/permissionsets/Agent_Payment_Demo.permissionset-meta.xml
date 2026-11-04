@@ -8,6 +8,7 @@
     <fieldPermissions><editable>true</editable><field>Agent_Purchase_Receipt__c.Approval_Id__c</field><readable>true</readable></fieldPermissions>
     <fieldPermissions><editable>true</editable><field>Agent_Purchase_Receipt__c.Cost_Center__c</field><readable>true</readable></fieldPermissions>
     <fieldPermissions><editable>false</editable><field>Agent_Purchase_Receipt__c.Decision__c</field><readable>true</readable></fieldPermissions>
+    <fieldPermissions><editable>false</editable><field>Agent_Purchase_Receipt__c.Decision_Reason__c</field><readable>true</readable></fieldPermissions>
     <fieldPermissions><editable>true</editable><field>Agent_Purchase_Receipt__c.Status__c</field><readable>true</readable></fieldPermissions>
     <fieldPermissions><editable>true</editable><field>Agent_Purchase_Receipt__c.Reason__c</field><readable>true</readable></fieldPermissions>
     <fieldPermissions><editable>true</editable><field>Agent_Purchase_Receipt__c.Seller__c</field><readable>true</readable></fieldPermissions>

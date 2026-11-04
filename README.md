@@ -139,7 +139,8 @@ sf org assign permset --name Agent_Payment_Demo --on-behalf-of <agent user usern
 ```
 
    People who approve purchases get **Agent Purchase Approver** instead. It lets them set
-   **Decision** on receipts waiting for approval and nothing else. The agent's permission set
+   **Decision** and **Decision Reason** on receipts waiting for approval and nothing else. A
+   decision can't be saved without a reason, and neither can be changed afterwards. The agent's permission set
    can't approve.
 
 ```bash
@@ -183,7 +184,7 @@ What to look for:
 | "Look up acme.com using seller demo-enrich-premium" (priced at $0.50) | Status **refused**: price is above the $0.01 limit, nothing signed |
 | "Look up acme.com using seller cheapdata" | Status **blocked**: not on the approved list |
 | Keep buying until the $0.25 monthly budget is used | Status **blocked**: could exceed the monthly budget |
-| "Look up acme.com using seller demo-enrich-plus" ($0.008, above the $0.006 approval threshold) | Status **pending_approval**: nothing bought yet. Open the receipt and set **Decision** to Approved; it updates to **paid** a few seconds later. Denied closes it with nothing bought |
+| "Look up acme.com using seller demo-enrich-plus" ($0.008, above the $0.006 approval threshold) | Status **pending_approval**: nothing bought yet. Open the receipt, set **Decision** to Approved and write a **Decision Reason**; it updates to **paid** a few seconds later. Denied closes it with nothing bought |
 | "Look up unknown-co.com" (the demo seller has no record) | Status **no_result**: nothing charged, because x402 sellers only collect payment when they answer successfully |
 | "Look up mismatch-co.com" (the demo seller returns another company's record) | Status **rejected**: paid $0.005, but the result failed its checks, so the data is withheld and the receipt records a refund owed |
 
@@ -197,6 +198,11 @@ purchases, amount paid, refunds owed, net, and how many attempts were rejected, 
 or denied. Add `&format=csv` for a spreadsheet download. The agent can pass an optional cost
 center with each purchase.
 
+`GET /approvals/log?month=2026-10` lists every approval decided that month: what was requested,
+who decided, their reason, and what happened (paid, blocked, denied) with the amount and
+transaction. It's also included in the JSON statement as `decisions`, and `&format=csv`
+downloads it for whoever reviews spend later.
+
 ## What this demonstrates
 
 - Spending rules are enforced in code outside the model, so an agent can't talk its way past them.
@@ -204,6 +210,8 @@ center with each purchase.
   somewhere else.
 - Budget is reserved before paying, so simultaneous purchases can't overspend.
 - Refusals are recorded too, so the audit trail shows what was stopped, not just what was paid.
+- Every approval carries the approver's reason, so a later review can judge the decision, not
+  just see that someone clicked Approve.
 - Pay for results: no data means no charge, and a paid result that fails its checks (set per seller
   as `resultCheck` in the policy) never reaches the agent and is booked as a refund owed. Refunds are
   only recorded, not collected; collecting them is part of a real vendor agreement.

@@ -38,6 +38,15 @@ export type Approval = {
   createdAt: string;
   decidedAt: string | null;
   decidedBy: string | null;
+  // The decider's own words for why, so whoever reviews spend later can judge the approval.
+  decisionNote: string | null;
+};
+
+// A decided approval and what came of it, for the decision log.
+export type DecisionLogEntry = Approval & {
+  outcomeStatus: ReceiptStatus | null;
+  outcomeAmountMicros: number;
+  outcomeTransaction: string | null;
 };
 
 // Pending approvals older than this can no longer be approved.
@@ -130,6 +139,8 @@ export class Store {
     const columns = new Set(this.db.prepare("PRAGMA table_info(receipts)").all().map((c: any) => c.name));
     if (!columns.has("cost_center")) this.db.exec("ALTER TABLE receipts ADD COLUMN cost_center TEXT NOT NULL DEFAULT ''");
     if (!columns.has("approval_id")) this.db.exec("ALTER TABLE receipts ADD COLUMN approval_id TEXT");
+    const approvalColumns = new Set(this.db.prepare("PRAGMA table_info(approvals)").all().map((c: any) => c.name));
+    if (!approvalColumns.has("decision_note")) this.db.exec("ALTER TABLE approvals ADD COLUMN decision_note TEXT");
   }
 
   createOrg(name: string, policy: OrgPolicy, apiKey = newApiKey()): { org: Org; apiKey: string } {
@@ -239,6 +250,7 @@ export class Store {
       createdAt: this.now().toISOString(),
       decidedAt: null,
       decidedBy: null,
+      decisionNote: null,
       ...fields,
     };
     this.db
@@ -267,11 +279,32 @@ export class Store {
   }
 
   // Moves a pending approval to its decision exactly once; returns false if it was already decided.
-  decideApproval(orgId: string, id: string, status: "approved" | "denied", decidedBy: string): boolean {
+  decideApproval(orgId: string, id: string, status: "approved" | "denied", decidedBy: string, note: string): boolean {
     const { changes } = this.db
-      .prepare("UPDATE approvals SET status = ?, decided_at = ?, decided_by = ? WHERE org_id = ? AND id = ? AND status = 'pending'")
-      .run(status, this.now().toISOString(), decidedBy, orgId, id);
+      .prepare("UPDATE approvals SET status = ?, decided_at = ?, decided_by = ?, decision_note = ? WHERE org_id = ? AND id = ? AND status = 'pending'")
+      .run(status, this.now().toISOString(), decidedBy, note, orgId, id);
     return changes === 1;
+  }
+
+  // Approvals decided in [from, to), each with the latest receipt it produced.
+  decisionLog(orgId: string, from: string, to: string): DecisionLogEntry[] {
+    return this.db
+      .prepare(
+        `SELECT a.*, r.status AS outcome_status, r.amount_micros AS outcome_amount_micros, r.transaction_ref AS outcome_transaction
+         FROM approvals a
+         LEFT JOIN receipts r ON r.rowid = (
+           SELECT rowid FROM receipts WHERE org_id = a.org_id AND approval_id = a.id AND status != 'pending_approval'
+           ORDER BY at DESC, rowid DESC LIMIT 1)
+         WHERE a.org_id = ? AND a.decided_at >= ? AND a.decided_at < ?
+         ORDER BY a.decided_at, a.rowid`,
+      )
+      .all(orgId, from, to)
+      .map((row: any) => ({
+        ...toApproval(row),
+        outcomeStatus: row.outcome_status ?? null,
+        outcomeAmountMicros: Number(row.outcome_amount_micros ?? 0),
+        outcomeTransaction: row.outcome_transaction ?? null,
+      }));
   }
 
   isExpired(approval: Approval): boolean {
@@ -327,5 +360,6 @@ function toApproval(row: any): Approval {
     createdAt: row.created_at,
     decidedAt: row.decided_at,
     decidedBy: row.decided_by,
+    decisionNote: row.decision_note ?? null,
   };
 }

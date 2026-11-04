@@ -252,11 +252,11 @@ test("a policy naming a seller outside the catalog is rejected", () => {
 function approvalSetup(rail = new MockRail()) {
   const s = setup(rail);
   s.store.setPolicy(s.org.id, { ...policy, approvalOverUsd: 0.005 });
-  const decide = async (id: string, decision: string, key = KEY) =>
+  const decide = async (id: string, decision: string, key = KEY, note: unknown = "Needed for the Q4 account review") =>
     s.app.request(`/approvals/${id}/decision`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-      body: JSON.stringify({ decision, decidedBy: "005xx00000APPROVER" }),
+      body: JSON.stringify({ decision, decidedBy: "005xx00000APPROVER", note }),
     });
   return { ...s, decide };
 }
@@ -300,7 +300,7 @@ test("a denied purchase is receipted and nothing is bought", async () => {
   const { approvalId } = await (await buy(ok)).json();
   const denied = await (await decide(approvalId, "deny")).json();
   assert.equal(denied.status, "denied");
-  assert.match(denied.reason, /denied by 005xx00000APPROVER/);
+  assert.match(denied.reason, /denied by 005xx00000APPROVER: Needed for the Q4 account review/);
   assert.equal(rail.calls.length, 0);
 });
 
@@ -329,6 +329,42 @@ test("one org can't decide another org's approval", async () => {
   store.createOrg("Globex", policy, OTHER_KEY);
   const { approvalId } = await (await buy(ok)).json();
   assert.equal((await decide(approvalId, "approve", OTHER_KEY)).status, 404);
+});
+
+test("a decision without a reason is refused and nothing is bought", async () => {
+  const { buy, decide, get, rail } = approvalSetup();
+  const { approvalId } = await (await buy(ok)).json();
+  for (const note of [null, "", "ok", "   \n\t  ", 42, "x".repeat(501)]) {
+    assert.equal((await decide(approvalId, "approve", KEY, note)).status, 400);
+  }
+  assert.equal(rail.calls.length, 0);
+  assert.equal((await get("/approvals")).approvals.length, 1);
+});
+
+test("the decision log shows who decided, why, and what it cost", async () => {
+  const { buy, decide, get, app } = approvalSetup();
+  const first = await (await buy({ ...ok, costCenter: "Sales" })).json();
+  const second = await (await buy({ ...ok, params: { domain: "globex.com" } })).json();
+  await decide(first.approvalId, "approve", KEY, "Renewal prep for\nAcme, approved by budget owner");
+  await decide(second.approvalId, "deny", KEY, "=Not a customer we're pursuing");
+
+  const { decisions } = await get("/approvals/log?month=2026-10");
+  assert.equal(decisions.length, 2);
+  assert.equal(decisions[0].note, "Renewal prep for Acme, approved by budget owner");
+  assert.equal(decisions[0].decidedBy, "005xx00000APPROVER");
+  assert.equal(decisions[0].outcome, "paid");
+  assert.equal(decisions[0].paidUsd, 0.005);
+  assert.equal(decisions[0].transaction, "0xmock");
+  assert.equal(decisions[1].status, "denied");
+  assert.equal(decisions[1].outcome, "denied");
+  assert.equal((await get("/statement?month=2026-10")).decisions.length, 2);
+  assert.equal((await get("/approvals/log?month=2026-09")).decisions.length, 0);
+
+  const res = await app.request("/approvals/log?month=2026-10&format=csv", { headers: { Authorization: `Bearer ${KEY}` } });
+  const lines = (await res.text()).trim().split("\n");
+  assert.equal(lines.length, 3);
+  assert.match(lines[0], /"note","outcome"/);
+  assert.match(lines[2], /"'=Not a customer we're pursuing"/);
 });
 
 // Finance statement.
@@ -380,6 +416,20 @@ test("a database from the first release gains the new columns", () => {
   const { org } = store.createOrg("Acme", policy, KEY);
   assert.equal(store.record({ orgId: org.id, status: "paid", reason: "x", sellerId: "s", requestedBy: "u", recordId: "", amountMicros: 1 }).costCenter, "");
   assert.equal(store.recent(org.id)[0].costCenter, "");
+});
+
+test("an approvals table from before decision notes gains the column", () => {
+  const path = join(mkdtempSync(join(tmpdir(), "gate-")), "old.db");
+  const old = new DatabaseSync(path);
+  old.exec(`CREATE TABLE approvals (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, status TEXT NOT NULL, seller_id TEXT NOT NULL,
+    params_json TEXT NOT NULL, requested_by TEXT NOT NULL, record_id TEXT NOT NULL, cost_center TEXT NOT NULL,
+    price_micros INTEGER NOT NULL, created_at TEXT NOT NULL, decided_at TEXT, decided_by TEXT)`);
+  old.close();
+  const store = new Store(path);
+  const { org } = store.createOrg("Acme", policy, KEY);
+  const a = store.createApproval({ orgId: org.id, sellerId: "s", params: {}, requestedBy: "u", recordId: "", costCenter: "", priceMicros: 1 });
+  assert.ok(store.decideApproval(org.id, a.id, "approved", "u", "a good reason"));
+  assert.equal(store.getApproval(org.id, a.id)?.decisionNote, "a good reason");
 });
 
 test("a hosted catalog fills in addresses from the environment", () => {

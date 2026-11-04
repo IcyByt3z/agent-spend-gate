@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Decision_Reason__c</fullName>
+    <label>Decision Reason</label>
+    <type>LongTextArea</type>
+    <length>500</length>
+    <visibleLines>3</visibleLines>
+    <description>The approver's reason for approving or denying. Required with a decision, sent to the gate, and kept in its decision log for whoever reviews spend later.</description>
+    <inlineHelpText>Required when you approve or deny. Say why, in a sentence: whoever reviews this spend later will read it.</inlineHelpText>
+</CustomField>
