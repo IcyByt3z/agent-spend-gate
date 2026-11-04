@@ -65,7 +65,7 @@ Keep names out of this file if the repository is ever made public; a role is eno
 
 | Date | Who | Where | Would use it? | Biggest objection, in their words | Asked for | Follow-up |
 |---|---|---|---|---|---|---|
-| 2026-11-03 | Salesforce services provider (commenter) | LinkedIn post | Positive: "the gate is the right shape" | "Make the approval reason visible to whoever reviews spend later, otherwise the person clicking approve becomes the weak point" | A recorded reason for each approval | Built same week (required Decision Reason + decision log); reply on the thread |
+| 2026-11-03 | Salesforce automation consultant at a Salesforce consultancy (commenter) | LinkedIn post | Positive: "the gate is the right shape" | "Make the approval reason visible to whoever reviews spend later, otherwise the person clicking approve becomes the weak point" | A recorded reason for each approval | Built same week (required Decision Reason + decision log); reply on the thread |
 
 ## Being straightforward about yourself
 
