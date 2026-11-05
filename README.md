@@ -172,6 +172,21 @@ sf org assign permset --name Agent_Purchase_Approver --on-behalf-of <approver us
 
    Check a script edit with `sf agent validate authoring-bundle --api-name Agent_Spend_Gate`.
 
+   **Or publish the saved agent directly** (needs an org with Agentforce, such as the free
+   Developer Edition with Agentforce; a playground expires). Create the agent user in Builder
+   first, put its username in `default_agent_user` in the `.agent` file, then from `salesforce/`:
+
+```bash
+sf org assign permset --name Agent_Payment_Demo --on-behalf-of <agent user username> --target-org <org alias>
+cp -R unpackaged/main/default/aiAuthoringBundles force-app/main/default/
+sf agent publish authoring-bundle --api-name Agent_Spend_Gate --target-org <org alias>
+rm -rf force-app/main/default/aiAuthoringBundles
+```
+
+   `sf agent publish` uploads the bundle itself (a plain `sf project deploy` of it fails at this
+   project's API version) and only looks for it under `force-app`, so the copy is temporary and
+   kept out of the package. Then activate the agent in Setup → Agentforce Agents.
+
 ## 5. Try it
 
 Ask the agent: *"Look up company details for acme.com."*
