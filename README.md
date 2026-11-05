@@ -152,7 +152,7 @@ sf org assign permset --name Agent_Purchase_Approver --on-behalf-of <approver us
 1. New Agent. Let the wizard create a new agent user, then assign it the permission set as above.
 2. Add a subagent named Company Lookup that the Agent Router routes company lookups to.
 3. Give it the action. A working Agent Script (not part of the package, because it names one
-   org's agent user) is in `salesforce/unpackaged/main/default/aiAuthoringBundles/Purchasing_Assistant_1/`;
+   org's agent user) is in `salesforce/unpackaged/main/default/aiAuthoringBundles/Agent_Spend_Gate/`;
    its key part is:
 
 ```
@@ -170,7 +170,7 @@ sf org assign permset --name Agent_Purchase_Approver --on-behalf-of <approver us
             target: "apex://AgentPurchaseAction"
 ```
 
-   Check a script edit with `sf agent validate authoring-bundle --api-name Purchasing_Assistant_1`.
+   Check a script edit with `sf agent validate authoring-bundle --api-name Agent_Spend_Gate`.
 
 ## 5. Try it
 

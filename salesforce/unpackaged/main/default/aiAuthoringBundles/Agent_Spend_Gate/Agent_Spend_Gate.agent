@@ -6,9 +6,9 @@ system:
         error: "Sorry, it looks like something has gone wrong."
 
 config:
-    developer_name: "Purchasing_Assistant"
-    agent_label: "Purchasing Assistant"
-    description: "New agent description"
+    developer_name: "Agent_Spend_Gate"
+    agent_label: "Agent Spend Gate"
+    description: "Buys company details from vetted sellers through the Agent Spend Gate, with a receipt for every attempt."
 
 language:
     default_locale: "en_US"
