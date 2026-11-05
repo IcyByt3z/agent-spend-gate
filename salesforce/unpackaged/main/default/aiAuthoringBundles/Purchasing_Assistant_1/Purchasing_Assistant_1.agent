@@ -32,7 +32,7 @@ variables:
         description: "This variable may also be referred to as VerifiedCustomerId"
 
 access:
-    default_agent_user: "purchasing_assistant@00dns000012aqqx7163144.ext"
+    default_agent_user: "agent_spend_gate@00dg800000qlksf1080749897.ext"
 
 knowledge:
     rag_feature_config_id: ""
