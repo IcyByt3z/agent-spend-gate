@@ -1,5 +1,19 @@
 # Agent spend gate
 
+> **About this project.** I built this in fall 2026 as a learning prototype while teaching myself
+> backend development and Salesforce Agentforce. The question behind it: how do you let an AI
+> agent take real actions for a business without handing it the keys?
+>
+> > I built it with AI coding assistants, steering the design, reviewing the code and writing the tests.
+>
+> The answer here is a gate between the agent and the money. The agent can only use sellers the
+> business has approved, every purchase has a limit and counts against a monthly budget, anything
+> above a set amount waits for a person to approve it (with a written reason that can't be
+> changed later), bad results are withheld, and every attempt gets a receipt, including the ones
+> that were blocked. It runs entirely on a test network with no real money.
+>
+> 3-minute demo: https://youtu.be/aprOw7Z5Uqc · Jason Tempinski · [LinkedIn](https://www.linkedin.com/in/jasontempinski)
+
 Lets a company's AI agents buy from outside vendors safely. The agent never holds money. It
 asks the **gate**, which enforces that company's rules before anything is paid, checks what
 came back, and records a receipt for every attempt, including the ones it stops.
